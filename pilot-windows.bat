@@ -15,6 +15,20 @@ if not exist "%~dp0pilot-windows.ps1" (
   exit /b 1
 )
 
+REM Auto-update: pull the latest fix before running (never fatal — if it
+REM fails we continue with local files and the .ps1 prints its version).
+where git >nul 2>&1
+if %errorlevel%==0 (
+  git rev-parse --is-inside-work-tree >nul 2>&1
+  if %errorlevel%==0 (
+    echo Updating from GitHub...
+    git pull --ff-only
+    if not "%errorlevel%"=="0" (
+      echo [!!] git pull failed — continuing with local files.
+    )
+  )
+)
+
 where powershell >nul 2>&1
 if %errorlevel%==0 (
   set "PSHOST=powershell"

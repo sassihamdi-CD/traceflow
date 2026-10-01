@@ -32,8 +32,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ScriptVersion = '2026-10-01-fs2'
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $RepoRoot
+Write-Host "TraceFlow pilot setup v$ScriptVersion"
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "  [OK] $msg" -ForegroundColor Green }
