@@ -2,18 +2,23 @@
 
 Pilot backend for TraceFlow AI. See repo root `migrations/` and `.env.example`.
 
-## Founder clone-and-run on Windows (one command)
+## Founder clone-and-run on Windows (one command, PowerShell)
 
-```bat
-git clone <repo-url> tracflow & cd tracflow
-pilot-windows.bat
+```powershell
+git clone <repo-url> tracflow; cd tracflow
+.\pilot-windows.bat
 ```
 
-Double-click `pilot-windows.bat`, or from PowerShell:
+(Or double-click `pilot-windows.bat` in Explorer.) From PowerShell you can
+also run the script directly:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\pilot-windows.ps1
 ```
+
+> NOTE: in PowerShell, `&` does NOT chain commands (use `;`) and local
+> scripts need the `.\` prefix — that is why bare `pilot-windows.bat`
+> fails with "command not found".
 
 The script automates everything: detects x64/ARM64, installs missing
 prerequisites (Git, Python 3.12, Docker Desktop via winget), creates `.env`
@@ -24,8 +29,26 @@ process on the pilot port, runs `docker compose up --build`, waits for
 
 Options: `-Port 8001` (use another port), `-NoDocker` (venv + uvicorn,
 no containers), `-NoBrowser` (don't auto-open the browser), `-Rebuild`
-(force image rebuild). Without Docker it falls back to a local venv
-automatically (asks before installing Docker Desktop).
+(force image rebuild), `-EnvFile "C:\Users\you\Downloads\.env"` (import a
+`.env` file you received privately). Without Docker it falls back to a local
+venv automatically (asks before installing Docker Desktop).
+
+### Real keys (Supabase / Anthropic / R2) — read this
+
+The repo only contains `.env.example` **placeholders** — the real keys live
+in your private `.env`, which is git-ignored and must NEVER be committed
+(anyone with your `ANTHROPIC_API_KEY` can burn your budget).
+To give your friend the full pilot (login + AI extraction + file storage):
+
+1. Send YOUR `.env` file privately (WhatsApp / Signal / encrypted mail).
+2. Friend saves it anywhere, e.g. `Downloads\.env`, then runs:
+   `.\pilot-windows.bat -EnvFile "$env:USERPROFILE\Downloads\.env"`
+   (or copies it to `.env` in the repo root manually).
+3. Without real keys the pilot still runs in the browser (`/docs`, `/health`,
+   `/ready` all green on local Postgres) — only login-gated routes (need
+   `SUPABASE_*`), AI extraction (needs `ANTHROPIC_API_KEY`) and uploads
+   (need `R2_*`) stay disabled. The script prints exactly which keys are
+   real vs placeholder on every run.
 
 ## Founder clone-and-run on Linux/macOS (Docker, recommended)
 

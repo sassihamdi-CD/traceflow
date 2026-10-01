@@ -18,13 +18,17 @@
   powershell -NoProfile -ExecutionPolicy Bypass -File .\pilot-windows.ps1
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File .\pilot-windows.ps1 -Port 8001 -NoBrowser
+.EXAMPLE
+  # Import a .env received privately (real keys are NEVER in git):
+  .\pilot-windows.bat -EnvFile "$env:USERPROFILE\Downloads\.env"
 #>
 [CmdletBinding()]
 param(
   [int]$Port = 0,          # 0 = read PORT from .env, fallback 8000
   [switch]$NoDocker,       # skip Docker, run uvicorn directly in a venv
   [switch]$NoBrowser,      # do not auto-open the browser
-  [switch]$Rebuild         # force `docker compose build` even when images exist
+  [switch]$Rebuild,        # force `docker compose build` even when images exist
+  [string]$EnvFile = ''    # path to a privately-received .env to import (see README "Real keys")
 )
 
 $ErrorActionPreference = 'Stop'
@@ -137,10 +141,14 @@ if ($HaveDocker -and $ComposeCmd) {
 
 # ---------------------------------------------------------------- 2. .env
 Write-Step 'Ensuring .env exists and DB_APP_PASSWORD is set'
-if (-not (Test-Path '.env')) {
+if ($EnvFile -ne '') {
+  if (-not (Test-Path $EnvFile)) { throw "EnvFile not found: $EnvFile" }
+  Copy-Item $EnvFile '.env' -Force
+  Write-Ok "Imported private env file -> .env ($EnvFile). Never commit this file."
+} elseif (-not (Test-Path '.env')) {
   if (-not (Test-Path '.env.example')) { throw '.env.example is missing — are you in the repo root?' }
   Copy-Item '.env.example' '.env'
-  Write-Ok 'Created .env from .env.example (fill SUPABASE_*/ANTHROPIC keys for full AI features)'
+  Write-Ok 'Created .env from .env.example (placeholders — see README "Real keys" for full features)'
 } else { Write-Ok '.env already exists' }
 
 $envText = Get-Content '.env' -Raw
@@ -156,6 +164,32 @@ if ($Port -eq 0) {
   if ($envText -match '(?m)^PORT=(\d+)\s*$') { $Port = [int]$Matches[1] } else { $Port = 8000 }
 }
 Write-Ok "Pilot port: $Port"
+
+# ---- Key check: which integrations are live vs placeholder ----
+$envMap = @{}
+foreach ($line in (Get-Content '.env')) {
+  if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$') { $envMap[$Matches[1]] = $Matches[2].Trim() }
+}
+function Test-RealKey($name) {
+  $v = $envMap[$name]
+  if ([string]::IsNullOrWhiteSpace($v)) { return $false }
+  foreach ($ph in @('change-me', 'xyz', '<account', 'sk-ant-change-me', 'example')) {
+    if ($v -like "*$ph*") { return $false }
+  }
+  return $true
+}
+Write-Host '  Key status (placeholder = feature disabled, pilot still runs):'
+$keyGroups = @(
+  @('SUPABASE_URL', 'SUPABASE_ANON_KEY', 'login-gated routes'),
+  @('ANTHROPIC_API_KEY', $null, 'AI extraction'),
+  @('R2_ENDPOINT', 'R2_ACCESS_KEY_ID', 'file uploads (R2)')
+)
+foreach ($g in $keyGroups) {
+  $names = @($g[0], $g[1]) | Where-Object { $_ }
+  $ok = $true; foreach ($n in $names) { if (-not (Test-RealKey $n)) { $ok = $false } }
+  if ($ok) { Write-Ok "$($g[2]): keys look REAL" }
+  else { Write-Warn "$($g[2]): placeholder keys — disabled until you import a real .env (README 'Real keys')" }
+}
 
 # ---------------------------------------------------------------- 3. Free port
 Write-Step "Checking localhost:$Port (kill stale process if needed)"
