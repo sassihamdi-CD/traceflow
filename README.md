@@ -9,12 +9,11 @@ git clone <repo-url> tracflow; cd tracflow
 .\pilot-windows.bat
 ```
 
-(Or double-click `pilot-windows.bat` in Explorer.) From PowerShell you can
-also run the script directly:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\pilot-windows.ps1
-```
+(Or double-click `pilot-windows.bat` in Explorer.) The launcher updates
+itself from GitHub, installs Python 3.12 via winget if missing, then runs
+`pilot-windows.py` — pure-stdlib Python, so there is no PowerShell parsing
+involved at all. If anything fails, run the no-change diagnosis and send
+its output: `py pilot-windows.py --check`.
 
 > NOTE: in PowerShell, `&` does NOT chain commands (use `;`) and local
 > scripts need the `.\` prefix — that is why bare `pilot-windows.bat`

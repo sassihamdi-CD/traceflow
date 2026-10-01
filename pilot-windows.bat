@@ -1,53 +1,40 @@
 @echo off
-REM TraceFlow pilot — double-click launcher for Windows.
-REM Runs pilot-windows.ps1 with Bypass (no permanent policy change).
-REM From PowerShell run:  .\pilot-windows.bat
-REM From cmd run:         pilot-windows.bat
-REM Do NOT run the .ps1 file with cmd, and do NOT paste .bat lines into
-REM PowerShell — each file only works with its own interpreter.
-
+REM TraceFlow pilot launcher. Needs Python 3.9+ (installed automatically via
+REM winget if missing). Run from PowerShell/cmd as:  .\pilot-windows.bat
 setlocal
 cd /d "%~dp0"
 
-if not exist "%~dp0pilot-windows.ps1" (
-  echo [XX] pilot-windows.ps1 not found next to this .bat. Re-clone the repo.
-  pause
-  exit /b 1
-)
-
-REM Auto-update: pull the latest fix before running (never fatal — if it
-REM fails we continue with local files and the .ps1 prints its version).
+REM Auto-update so the launcher can never go stale (never fatal).
 where git >nul 2>&1
 if %errorlevel%==0 (
   git rev-parse --is-inside-work-tree >nul 2>&1
   if %errorlevel%==0 (
     echo Updating from GitHub...
-    git pull --ff-only
-    if not "%errorlevel%"=="0" (
-      echo [!!] git pull failed — continuing with local files.
-    )
+    git pull --ff-only >nul 2>&1
   )
 )
 
-where powershell >nul 2>&1
-if %errorlevel%==0 (
-  set "PSHOST=powershell"
-) else (
-  where pwsh >nul 2>&1
-  if %errorlevel%==0 (
-    set "PSHOST=pwsh"
-  ) else (
-    echo [XX] No PowerShell found. Install it from https://aka.ms/powershell
+where py >nul 2>&1
+if %errorlevel%==0 ( set "PY=py" ) else ( set "PY=python" )
+%PY% --version >nul 2>&1
+if not %errorlevel%==0 (
+  echo Python not found - installing via winget...
+  winget install --exact --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements
+  set "PY=py"
+  %PY% --version >nul 2>&1
+  if not %errorlevel%==0 (
+    echo [XX] Python install failed. Get it from https://www.python.org/downloads/windows/
     pause
     exit /b 1
   )
 )
 
-%PSHOST% -NoProfile -ExecutionPolicy Bypass -File "%~dp0pilot-windows.ps1" %*
+%PY% "%~dp0pilot-windows.py" %*
 set EXITCODE=%ERRORLEVEL%
 if not "%EXITCODE%"=="0" (
   echo.
-  echo [XX] Setup failed with exit code %EXITCODE%. Read the messages above.
+  echo [XX] Setup exited with code %EXITCODE%. Read the messages above.
+  echo For a no-change diagnosis, run:  py pilot-windows.py --check
   pause
 )
 endlocal
