@@ -1,0 +1,4 @@
+# Windows launchers need CRLF to double-click reliably; shell scripts keep LF.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.sh text eol=lf
