@@ -1,0 +1,64 @@
+# Pilot clone-and-run: `cp .env.example .env` then `docker compose up --build`.
+# API waits for Postgres (service_healthy) and applies migrations automatically.
+name: traceflow-pilot
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: traceflow
+      POSTGRES_USER: traceflow_app
+      POSTGRES_PASSWORD: ${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traceflow_app -d traceflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}@db:5432/traceflow
+    command: bash scripts/migrate.sh
+    restart: "no"
+
+  api:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      # Compose provides the pilot DB; .env supplies Supabase/R2/Claude keys.
+      DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}@db:5432/traceflow
+      PORT: 8000
+    ports:
+      - "${PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}@db:5432/traceflow
+    command: python scripts/worker.py
+    restart: unless-stopped
+
+volumes:
+  pgdata:
