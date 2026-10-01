@@ -1,6 +1,7 @@
 # Pilot clone-and-run: `cp .env.example .env` then `docker compose up --build`.
 # API waits for Postgres (service_healthy) and applies migrations automatically.
-name: traceflow-pilot
+# NOTE: no top-level `name:` key — keeps this file working with both
+# `docker compose` (v2) and the older standalone `docker-compose` (v1).
 
 services:
   db:

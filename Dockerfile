@@ -2,8 +2,9 @@ FROM python:3.12-slim-bookworm AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /srv/app
 
-# System deps (psycopg binary needs libpq at runtime only; keep slim)
-RUN apt-get update && apt-get install -y --no-install-recommends libpq5 curl \
+# System deps: libpq (psycopg runtime), postgresql-client (migrate service
+# runs scripts/migrate.sh via psql), curl (container healthcheck).
+RUN apt-get update && apt-get install -y --no-install-recommends libpq5 postgresql-client curl \
   && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
