@@ -73,6 +73,17 @@ Services: `api` (FastAPI), `worker` (extraction queue), `db` (Postgres 16),
 `migrate` (one-shot `scripts/migrate.sh`), `web` (Next.js pilot console on
 `${WEB_PORT:-3000}`, built from `./web` — needs no local Node).
 
+### Wrong app on localhost? (port clash)
+
+If `http://localhost:3000` shows another app (e.g. Twenty CRM), that port is
+taken — TraceFlow never got it. Move the console: set `WEB_PORT=3001` in
+`.env`, re-run `docker compose up --build -d`, and open
+`http://localhost:3001`. Same for the API: if `:8000` is taken, set
+`PORT=8001` in `.env` **and** `NEXT_PUBLIC_API_URL=http://localhost:8001`,
+then rebuild (`NEXT_PUBLIC_*` values bake into the web image at build
+time). The Windows script (`pilot-windows.bat`) detects and kills stale
+processes on both ports automatically.
+
 ## Quickstart (no keys needed for unit tests)
 
 ```bash
