@@ -8,3 +8,8 @@ __pycache__/
 *.swp
 *.pdf
 .DS_Store
+# frontend build outputs (installed/built inside Docker)
+web/node_modules/
+web/.next/
+web/out/
+*.tsbuildinfo

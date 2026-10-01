@@ -1,5 +1,8 @@
 # Pilot clone-and-run: `cp .env.example .env` then `docker compose up --build`.
 # API waits for Postgres (service_healthy) and applies migrations automatically.
+# Web console (Next.js) is built from ./web and served on ${WEB_PORT:-3000};
+# NEXT_PUBLIC_* keys are baked in at build time, so re-run with --build
+# after changing keys in .env.
 # NOTE: no top-level `name:` key — keeps this file working with both
 # `docker compose` (v2) and the older standalone `docker-compose` (v1).
 
@@ -59,6 +62,21 @@ services:
     environment:
       DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}@db:5432/traceflow
     command: python scripts/worker.py
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-https://xyz.supabase.co}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-change-me}
+        NEXT_PUBLIC_PILOT_INVITE_CODE: ${NEXT_PUBLIC_PILOT_INVITE_CODE:-change-me}
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${WEB_PORT:-3000}:3000"
     restart: unless-stopped
 
 volumes:

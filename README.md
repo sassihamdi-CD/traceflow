@@ -22,10 +22,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\pilot-windows.ps1
 
 The script automates everything: detects x64/ARM64, installs missing
 prerequisites (Git, Python 3.12, Docker Desktop via winget), creates `.env`
-from `.env.example` with a random local `DB_APP_PASSWORD`, kills any stale
-process on the pilot port, runs `docker compose up --build`, waits for
-`/health` + `/ready`, and opens the pilot in the browser
-(`http://localhost:8000/docs` — this repo is API-only, Swagger UI is the UI).
+from `.env.example` with a random local `DB_APP_PASSWORD`, bridges your
+backend keys into the frontend build args, kills any stale process on the
+pilot ports, runs `docker compose up --build` (**backend API + Postgres +
+worker + Next.js console — Docker installs everything, no local Node
+needed**), waits for `/health` + `/ready` + the web console, and opens the
+pilot console in the browser (`http://localhost:3000`).
 
 Options: `-Port 8001` (use another port), `-NoDocker` (venv + uvicorn,
 no containers), `-NoBrowser` (don't auto-open the browser), `-Rebuild`
@@ -40,15 +42,22 @@ in your private `.env`, which is git-ignored and must NEVER be committed
 (anyone with your `ANTHROPIC_API_KEY` can burn your budget).
 To give your friend the full pilot (login + AI extraction + file storage):
 
-1. Send YOUR `.env` file privately (WhatsApp / Signal / encrypted mail).
-2. Friend saves it anywhere, e.g. `Downloads\.env`, then runs:
+1. Send YOUR backend `.env` file privately (WhatsApp / Signal / encrypted mail).
+2. Append your `tracflow-web/.env.local` lines (the 4 `NEXT_PUBLIC_*` values)
+   to that same file — or let the script bridge `SUPABASE_*` automatically
+   (it copies them into `NEXT_PUBLIC_*`; only the invite code then stays
+   placeholder unless provided).
+3. Friend saves it anywhere, e.g. `Downloads\.env`, then runs:
    `.\pilot-windows.bat -EnvFile "$env:USERPROFILE\Downloads\.env"`
    (or copies it to `.env` in the repo root manually).
-3. Without real keys the pilot still runs in the browser (`/docs`, `/health`,
-   `/ready` all green on local Postgres) — only login-gated routes (need
-   `SUPABASE_*`), AI extraction (needs `ANTHROPIC_API_KEY`) and uploads
-   (need `R2_*`) stay disabled. The script prints exactly which keys are
-   real vs placeholder on every run.
+4. After ANY key change: re-run with `-Rebuild` (or
+   `docker compose up --build`) — `NEXT_PUBLIC_*` values are baked into the
+   web image at build time.
+5. Without real keys the pilot still runs in the browser (console landing +
+   `/passport`, API `/docs`, `/health`, `/ready` all work on local
+   Postgres) — only login-gated routes (need `SUPABASE_*`), AI extraction
+   (needs `ANTHROPIC_API_KEY`) and uploads (need `R2_*`) stay disabled. The
+   script prints exactly which keys are real vs placeholder on every run.
 
 ## Founder clone-and-run on Linux/macOS (Docker, recommended)
 
@@ -61,7 +70,8 @@ curl localhost:8000/ready    # expect {"ok": true, "db": "up"}
 ```
 
 Services: `api` (FastAPI), `worker` (extraction queue), `db` (Postgres 16),
-`migrate` (one-shot `scripts/migrate.sh`).
+`migrate` (one-shot `scripts/migrate.sh`), `web` (Next.js pilot console on
+`${WEB_PORT:-3000}`, built from `./web` — needs no local Node).
 
 ## Quickstart (no keys needed for unit tests)
 
