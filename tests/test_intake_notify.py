@@ -57,9 +57,9 @@ def test_intake_router_paths_and_guards():
     assert "/api/intake/email" in INTAKE_ROUTER
     assert "require_reviewer" in INTAKE_ROUTER
     assert "X-Intake-Secret" in INTAKE_ROUTER
-    assert "403" in INTAKE_ROUTER
-    assert "503" in INTAKE_ROUTER
-    assert "intake not configured" in INTAKE_ROUTER
+    assert "bad_intake_secret" in INTAKE_ROUTER
+    assert "intake_unconfigured" in INTAKE_ROUTER
+    assert "intake_failed" in INTAKE_ROUTER
     assert "intake_secret" in INTAKE_ROUTER
 
 
@@ -67,7 +67,7 @@ def test_notifications_router_paths_and_guards():
     assert "/api/notifications" in NOTIF_ROUTER
     assert "/read" in NOTIF_ROUTER
     assert "read-all" in NOTIF_ROUTER
-    assert "get_caller" in NOTIF_ROUTER
+    assert "require_member" in NOTIF_ROUTER  # fail-closed member auth (was get_caller)
     assert "require_reviewer" not in NOTIF_ROUTER  # reads stay strict, no write-guard needed
     assert "workspace_id" in NOTIF_ROUTER
     assert "ORDER BY created_at DESC" in NOTIF_ROUTER

@@ -11,6 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 import logging
 
+from app import errors
 from app.config import WORKSPACE_ID, settings
 
 logger = logging.getLogger("traceflow.auth")
@@ -28,11 +29,23 @@ class Caller:
 async def get_caller(
     creds: HTTPAuthorizationCredentials = Depends(security),
 ) -> Caller:
+    """Validate Supabase session, then resolve workspace/role from memberships.
+
+    FAIL-CLOSED (per-company DB decision):
+    - Supabase session invalid/missing -> 401.
+    - Membership lookup DB error -> 503 (never mint rights on outage).
+    - No membership row -> role "none" (callers must redeem an invite;
+      console routes requiring membership return 403, they do NOT
+      silently fall back to reviewer).
+    The invite-redeem endpoint stays on get_caller (auth-only) so a new
+    user with no membership yet can redeem. All other console routes must
+    use require_member / require_reviewer / require_admin.
+    """
     if creds is None or not creds.credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing session")
+        raise errors.session_missing()
     token = creds.credentials
     if not settings.supabase_url or not settings.supabase_anon_key:
-        raise HTTPException(status_code=500, detail="Auth not configured")
+        raise errors.auth_unconfigured()
     import httpx
 
     try:
@@ -45,18 +58,18 @@ async def get_caller(
                 },
             )
     except httpx.HTTPError:
-        raise HTTPException(status_code=503, detail="Auth service unreachable")
+        raise errors.auth_unavailable()
     if resp.status_code != 200:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
+        raise errors.session_invalid()
     try:
         user_id = resp.json().get("id")
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
+        raise errors.session_invalid()
     if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
+        raise errors.session_invalid()
     user_id = str(user_id)
     workspace_id = WORKSPACE_ID
-    role = "reviewer"
+    role = "none"
     try:
         from app.db import get_pool
 
@@ -71,22 +84,42 @@ async def get_caller(
                 workspace_id = row[0]
                 if row[1]:
                     role = row[1]
+    except HTTPException:
+        raise
     except Exception as e:
-        # Pilot single-tenant: session already validated via Supabase above.
-        # Membership row only refines workspace/role; a DB outage must not
-        # silently mint reviewer rights — log loudly, keep safe default.
-        logger.warning("membership lookup fallback: %s: %s", type(e).__name__, e)
+        # Fail closed: a DB outage must never mint reviewer rights.
+        logger.warning("membership lookup failed closed: %s: %s", type(e).__name__, e)
+        raise errors.membership_unavailable()
     return Caller(user_id=user_id, workspace_id=workspace_id, role=role)
+
+
+async def ensure_workspace_exists(conn, workspace_id: str) -> None:
+    """Workspace boot check: refuse writes when WORKSPACE_ID has no row.
+
+    Raises 409 (FK-safe, human-actionable) instead of letting the INSERT
+    hit the workspaces FK and surface as a 500.
+    """
+    cur = await conn.execute("SELECT 1 FROM workspaces WHERE id = %s", (workspace_id,))
+    if await cur.fetchone() is None:
+        raise errors.workspace_missing()
 
 
 def require_role(*allowed: str):
     async def checker(caller: Caller = Depends(get_caller)) -> Caller:
+        if caller.role == "none":
+            raise errors.not_member()
         if caller.role not in allowed:
-            raise HTTPException(status_code=403, detail="Insufficient role")
+            raise errors.forbidden_role()
         return caller
 
     return checker
 
 
-require_admin = require_role("admin")
-require_reviewer = require_role("admin", "reviewer")
+# PILOT: single role. The person running the pilot inside the manufacturer
+# owns the workspace and can do EVERYTHING — upload, review, publish.
+# require_admin / require_reviewer are aliases of require_member: the role
+# column is informational only until the commercial phase reintroduces tiers.
+# Only non-members ("none", no invite redeemed) are blocked, with guidance.
+require_member = require_role("admin", "reviewer", "supplier", "auditor", "owner")
+require_admin = require_member
+require_reviewer = require_member

@@ -1,10 +1,12 @@
-# Login invite redeem
-1. Sign in (or sign up) on /login to establish a Supabase session.
-2. Paste invite code into "Redeem invite" → POST /api/invites/redeem {code}.
-3. Success creates workspace membership; UI shows workspace + role.
-4. Errors show inline; SESSION_EXPIRED redirects to /login.
-5. Signup pilot-code check (NEXT_PUBLIC_PILOT_INVITE_CODE) is UX-only.
-6. Server-side invite gate is primary; never rely on client check.
-7. Harden Supabase dashboard: disable open signup when pilot ends.
-8. Turn "Confirm email" ON post-pilot; keep OFF only during pilot.
-9. Enforce SSO/MFA post-pilot; rotate pilot codes; audit members.
+# Login (manufacturers) + founder area
+1. Founder opens /founder (separate page, founder key — NOT the portal),
+   fills company + contact + seats, generates ONE company code, sends it.
+2. Manufacturer opens /login → Create account → email + password + company
+   code. The code is checked BEFORE the account is created, then auto-joined.
+   No second step, no redeem box.
+3. Afterwards: email + password only. Session persists; logout/login resumes
+   the last page. A join box appears ONLY if signed in but not yet a member
+   (rare edge: code ran out mid-signup).
+4. One code per company, shared with everyone there (seats = headcount).
+5. The old "Redeem invite" box is gone. Manufacturer portal = /login + console.
+6. Post-pilot: Confirm email ON, disable open signup, SSO/MFA, rotate codes.

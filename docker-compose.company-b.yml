@@ -1,0 +1,78 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: traceflow_b
+      POSTGRES_USER: traceflow_app
+      POSTGRES_PASSWORD: ${DB_APP_PASSWORD_B:?set DB_APP_PASSWORD_B in .env}
+    volumes:
+      - pgdata_b:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traceflow_app -d traceflow_b"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD_B}@db:5432/traceflow_b
+    command: bash scripts/migrate.sh
+    restart: "no"
+
+  api:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD_B}@db:5432/traceflow_b
+      PORT: 8002
+    ports:
+      - "${PORT_B:-8002}:8002"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD_B}@db:5432/traceflow_b
+    command: python scripts/worker.py
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL_B:-http://localhost:8002}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-https://xyz.supabase.co}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-change-me}
+        NEXT_PUBLIC_PILOT_INVITE_CODE: ${NEXT_PUBLIC_PILOT_INVITE_CODE:-change-me}
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD_B}@db:5432/traceflow_b
+    ports:
+      - "${WEB_PORT_B:-3002}:3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata_b:

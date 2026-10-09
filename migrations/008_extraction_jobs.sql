@@ -14,4 +14,4 @@ CREATE TABLE IF NOT EXISTS extraction_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON extraction_jobs(status, created_at);
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON extraction_jobs TO traceflow_app;
+GRANT SELECT, INSERT, UPDATE ON client_requests TO CURRENT_USER;

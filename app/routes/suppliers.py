@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
-from app.auth import Caller, get_caller, require_reviewer
+from app import errors
+
+from app.auth import Caller, ensure_workspace_exists, require_member, require_reviewer
 from app.db import get_pool
+from app.schemas import uuid_or_404
 
 router = APIRouter()
 
@@ -13,9 +16,10 @@ async def create_supplier(body: dict, caller: Caller = Depends(require_reviewer)
     """Create a supplier (name + optional external_code). Audited, same txn."""
     name = (body.get("name") or "").strip()
     if not name:
-        raise HTTPException(status_code=422, detail="Missing name")
+        raise errors.missing_field("a supplier name")
     pool = await get_pool()
     async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
         async with conn.transaction():
             cur = await conn.execute(
                 "INSERT INTO suppliers (workspace_id, name, external_code)"
@@ -32,7 +36,7 @@ async def create_supplier(body: dict, caller: Caller = Depends(require_reviewer)
 
 
 @router.get("/api/suppliers")
-async def list_suppliers(caller: Caller = Depends(get_caller)):
+async def list_suppliers(caller: Caller = Depends(require_member)):
     pool = await get_pool()
     async with pool.connection() as conn:
         cur = await conn.execute(
@@ -60,15 +64,32 @@ async def list_suppliers(caller: Caller = Depends(get_caller)):
 
 @router.post("/api/suppliers/{supplier_id}/followups")
 async def create_followup(supplier_id: str, body: dict, caller: Caller = Depends(require_reviewer)):
+    uuid_or_404(supplier_id, "That supplier")
+    # product_id + field_key are NOT NULL in the DB: reject omission here
+    # with 422 instead of letting the INSERT blow up as a 500.
+    product_id = body.get("product_id")
+    field_key = body.get("field_key")
+    if not product_id or not str(product_id).strip():
+        raise errors.missing_field("the product this follow-up is about")
+    if not field_key or not str(field_key).strip():
+        raise errors.missing_field("the field this follow-up is about")
+    uuid_or_404(product_id, "That product")
     pool = await get_pool()
     async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
         async with conn.transaction():
             cur = await conn.execute(
                 "SELECT id FROM suppliers WHERE id = %s AND workspace_id = %s",
                 (supplier_id, caller.workspace_id),
             )
             if await cur.fetchone() is None:
-                raise HTTPException(status_code=404, detail="Supplier not found")
+                raise errors.not_found("That supplier")
+            cur = await conn.execute(
+                "SELECT id FROM products WHERE id = %s AND workspace_id = %s",
+                (product_id, caller.workspace_id),
+            )
+            if await cur.fetchone() is None:
+                raise errors.not_found("That product")
             import json as _json
             cur = await conn.execute(
                 "INSERT INTO supplier_followups (workspace_id, supplier_id, product_id, field_key,"

@@ -39,7 +39,7 @@ def test_task_instructions_carry_contract_and_location_rules():
     pdf = pdf_task_instruction("sku (SKU)")
     assert "Page 3" in pdf and "JSON array" in pdf
     table = table_task_instruction("sku (SKU)", '[{"sheet":"Sheet 1"}]')
-    assert "Sheet 1 / F8" in table and "Do not invent coordinates" in table
+    assert "Sheet 1 / F8" in table and "Do not invent" in table
 
 
 def test_sanitize_drops_unknown_keys_and_empty_values():

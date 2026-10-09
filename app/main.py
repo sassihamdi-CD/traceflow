@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db import close_pool, get_pool
-from app.routes import ask, documents, fields, intake, invites, notifications, ops, products, public, publish, requests, suppliers
+from app.routes import ask, documents, fields, founder, intake, invites, notifications, ops, products, public, publish, requests, suppliers
 
 
 @asynccontextmanager
@@ -34,7 +34,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.frontend_url.split(",") if o.strip()],
     allow_methods=["GET", "POST", "OPTIONS", "PATCH", "PUT", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Founder-Key"],
     max_age=600,
 )
 
@@ -43,6 +43,7 @@ app.include_router(documents.router)
 app.include_router(intake.router)
 app.include_router(notifications.router)
 app.include_router(invites.router)
+app.include_router(founder.router)
 app.include_router(ask.router)
 app.include_router(requests.router)
 app.include_router(fields.router)
@@ -78,4 +79,21 @@ async def security_headers(request, call_next):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "no-referrer"
+    # HSTS: console is HTTPS-only in prod (Railway/Cloudflare terminate TLS).
+    # Harmless on http://localhost (browsers ignore HSTS over HTTP).
+    resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    # CSP: API serves JSON only (no HTML/JS). Tight default; relax
+    # frame-ancestors only if a trusted embed is ever required.
+    resp.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
     return resp
+
+# Rate-limit guidance (per-company pilot, no in-process limiter yet):
+# - Enforce at the edge (Cloudflare WAF / Railway / nginx), NOT in app code:
+#     POST /api/invites/redeem + POST /api/invites/signup-gate: 10 req/min/IP,
+#       429 + Retry-After on excess (brute-force protection for invite codes).
+#     POST /api/intake/email: 60 req/min/IP + X-Intake-Secret required
+#       (provider webhook; alert on 403 spikes).
+#     General /api/*: 300 req/min/IP is ample for the reviewer console.
+# - If edge limiting is unavailable, add slowapi (in-process token bucket)
+#   on the two invite endpoints first; they are the only unauthenticated-
+#   adjacent brute-force surface (redeem itself still needs a session).

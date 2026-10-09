@@ -7,14 +7,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.auth import Caller, get_caller, require_reviewer
+from app.auth import Caller, ensure_workspace_exists, require_member, require_reviewer
 from app.db import get_pool
 
 router = APIRouter()
 
 
 @router.get("/api/review-queue")
-async def review_queue(caller: Caller = Depends(get_caller)):
+async def review_queue(caller: Caller = Depends(require_member)):
     """Every proposed value awaiting human action, newest last (FIFO)."""
     pool = await get_pool()
     async with pool.connection() as conn:
@@ -50,6 +50,7 @@ async def review_queue_accept_all(caller: Caller = Depends(require_reviewer)):
 
     pool = await get_pool()
     async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
         async with conn.transaction():
             cur = await conn.execute(
                 "SELECT id, product_id, field_key FROM field_values"
@@ -77,7 +78,7 @@ async def review_queue_accept_all(caller: Caller = Depends(require_reviewer)):
 
 
 @router.get("/api/activity")
-async def activity(caller: Caller = Depends(get_caller), limit: int = 50):
+async def activity(caller: Caller = Depends(require_member), limit: int = 50):
     """Most recent audit rows. Insert-only table: this endpoint only SELECTs."""
     limit = max(1, min(limit, 200))
     pool = await get_pool()

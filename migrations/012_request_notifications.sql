@@ -24,5 +24,5 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_ws ON notifications(workspace_id, created_at DESC);
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON request_items TO traceflow_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON notifications TO traceflow_app;
+GRANT SELECT, INSERT, UPDATE ON client_requests TO CURRENT_USER;
+GRANT SELECT, INSERT, UPDATE ON client_requests TO CURRENT_USER;

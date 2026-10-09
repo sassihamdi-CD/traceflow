@@ -102,6 +102,7 @@ async def extract_full_items_pdf(body: bytes) -> list[dict]:
         resp = await client.messages.create(
             model=settings.anthropic_model,
             max_tokens=12000,
+            temperature=0,
             system=FULL_ITEMS_SYSTEM,
             messages=[
                 {
@@ -133,10 +134,15 @@ def sanitize_doc_items(items: object) -> list[dict]:
     """Keep only well-formed rows: non-empty label+value strings.
 
     Truncates every string to 500 chars and caps the list at 200 items.
+    Returns a TruncatedList: `.truncated` is True when the 200-item cap bit
+    off rows OR any string was shortened at 500 chars, so the caller can
+    surface the flag on the document row + UI badge.
     Never raises: [] on malformed input.
     """
+    from app.services.extraction import TruncatedList
+
+    clean = TruncatedList()
     try:
-        clean: list[dict] = []
         if not isinstance(items, list):
             return clean
         for it in items:
@@ -148,19 +154,28 @@ def sanitize_doc_items(items: object) -> list[dict]:
                 continue
             if not isinstance(value, str) or not value.strip():
                 continue
+            if len(clean) >= MAX_ITEMS:
+                clean.truncated = True
+                break
             unit = it.get("unit")
             location = it.get("location")
+            label_s = label.strip()
+            value_s = value.strip()
+            unit_s = unit.strip() if isinstance(unit, str) and unit.strip() else None
+            location_s = location.strip() if isinstance(location, str) and location.strip() else None
+            if (len(label_s) > MAX_LEN or len(value_s) > MAX_LEN
+                    or (unit_s is not None and len(unit_s) > MAX_LEN)
+                    or (location_s is not None and len(location_s) > MAX_LEN)):
+                clean.truncated = True
             clean.append({
-                "label": label.strip()[:MAX_LEN],
-                "value": value.strip()[:MAX_LEN],
-                "unit": unit.strip()[:MAX_LEN] if isinstance(unit, str) and unit.strip() else None,
-                "location": location.strip()[:MAX_LEN] if isinstance(location, str) and location.strip() else None,
+                "label": label_s[:MAX_LEN],
+                "value": value_s[:MAX_LEN],
+                "unit": unit_s[:MAX_LEN] if unit_s is not None else None,
+                "location": location_s[:MAX_LEN] if location_s is not None else None,
             })
-            if len(clean) >= MAX_ITEMS:
-                break
-        return clean[:MAX_ITEMS]
+        return clean
     except Exception:
-        return []
+        return clean
 
 
 async def store_document_items(conn, workspace_id: str, document_id: str, items: list[dict]) -> list[dict]:

@@ -29,9 +29,9 @@ def test_redeem_writes_audit_log():
 
 
 def test_redeem_error_mapping():
-    assert "404" in INVITES_SRC
-    assert "409" in INVITES_SRC
-    assert "410" in INVITES_SRC
+    assert "bad_invite" in INVITES_SRC
+    assert "invite_used" in INVITES_SRC
+    assert "invite_expired" in INVITES_SRC
 
 
 def test_migration_code_hash_unique():
@@ -46,4 +46,9 @@ def test_migration_role_check():
 
 
 def test_migration_seeds_pilot_hex():
-    assert PILOT_HEX in MIGRATION_SRC
+    # Key hygiene (checklist A5): TF-133C98 was committed to git = compromised.
+    # 009 must NOT ship a live seed hex; 014 deletes the row on existing DBs.
+    assert PILOT_HEX not in MIGRATION_SRC
+    import pathlib as _pl
+    h014 = (_pl.Path(__file__).resolve().parents[1] / "migrations" / "014_invite_hygiene.sql").read_text()
+    assert PILOT_HEX in h014  # cleanup migration targets the compromised row

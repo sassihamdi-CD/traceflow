@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 
 import pandas as pd
 from anthropic import AsyncAnthropic
@@ -31,37 +32,105 @@ from app.services.extraction_prompts import (
 )
 
 
-def xlsx_to_table(xlsx_bytes: bytes, max_rows: int = 500) -> list[dict]:
+class TruncatedList(list):
+    """A plain list that remembers whether a pipeline cap cut it short.
+
+    Behaves exactly like a list (iteration, indexing, len, json.dumps all
+    work), so existing call sites are unaffected; new code reads `.truncated`
+    to surface the flag on the document row + UI badge.
+    """
+
+    def __init__(self, items=(), truncated: bool = False):
+        super().__init__(items)
+        self.truncated = truncated
+
+
+# Row caps feeding the truncation flag (mirrors prompt + doc budgets).
+TABLE_MAX_ROWS = 500
+PARTIES_CAP = 12
+
+# PDF evidence pins must look like Claude's page reference, e.g. 'Page 3'.
+PDF_LOCATION_RE = re.compile(r"^Page \d+(?:-\d+)?$")
+
+
+def table_locations(table: list[dict] | None) -> set[str]:
+    """Every location string the model is allowed to echo back."""
+    valid: set[str] = set()
+    for r in table or []:
+        if isinstance(r, dict) and r.get("sheet") and r.get("cell"):
+            valid.add(f"{r['sheet']} / {r['cell']}")
+    return valid
+
+
+def coerce_pdf_location(location: object) -> str | None:
+    """Keep Claude's page reference only when it matches 'Page N'."""
+    if not isinstance(location, str):
+        return None
+    loc = re.sub(r"\s+", " ", location.strip())
+    return loc if PDF_LOCATION_RE.match(loc) else None
+
+
+def coerce_table_location(location: object, valid: set[str]) -> str | None:
+    """Keep a sheet/cell pin only when it exists in the parsed table."""
+    if not isinstance(location, str):
+        return None
+    loc = location.strip()
+    return loc if loc in valid else None
+
+
+def validate_item_locations(items: list[dict], ext: str, table: list[dict] | None = None) -> list[dict]:
+    """Post-hoc coordinate check on extracted passport values.
+
+    The model is told to copy coordinates verbatim, but it still invents
+    them: XLSX/CSV locations must exist in the parsed table, PDF locations
+    must match 'Page N'. Unprovable pins are nulled (the VALUE is kept for
+    the reviewer) — a fabricated pin is worse than a missing one.
+    Never raises; unknown ext keeps locations untouched.
+    """
+    out: list[dict] = []
+    valid = table_locations(table) if ext in (".xlsx", ".csv") else set()
+    for it in items:
+        it = dict(it)
+        loc = it.get("location")
+        if ext in (".xlsx", ".csv"):
+            it["location"] = coerce_table_location(loc, valid)
+        elif ext == ".pdf":
+            it["location"] = coerce_pdf_location(loc)
+        out.append(it)
+    return out
+
+
+def xlsx_to_table(xlsx_bytes: bytes, max_rows: int = TABLE_MAX_ROWS) -> TruncatedList:
     """Flatten workbook cells to [{sheet, cell, value}]. Coordinates from openpyxl."""
     wb = load_workbook(filename=io.BytesIO(xlsx_bytes), data_only=True, read_only=True)
-    rows: list[dict] = []
-    for ws in wb.worksheets:
-        count = 0
-        for row in ws.iter_rows(values_only=False):
-            for cell in row:
-                if cell.value is None or (isinstance(cell.value, str) and not cell.value.strip()):
-                    continue
-                rows.append({"sheet": ws.title, "cell": cell.coordinate, "value": str(cell.value)})
-                count += 1
-                if count >= max_rows:
-                    break
-            if count >= max_rows:
-                break
+    rows = TruncatedList()
+    try:
+        for ws in wb.worksheets:
+            for row in ws.iter_rows(values_only=False):
+                for cell in row:
+                    if cell.value is None or (isinstance(cell.value, str) and not cell.value.strip()):
+                        continue
+                    if len(rows) >= max_rows:
+                        # A (max+1)th non-empty cell exists: the cap bit off data.
+                        rows.truncated = True
+                        return rows
+                    rows.append({"sheet": ws.title, "cell": cell.coordinate, "value": str(cell.value)})
+    finally:
+        wb.close()
     return rows
 
 
-def csv_to_table(csv_bytes: bytes, max_rows: int = 500) -> list[dict]:
+def csv_to_table(csv_bytes: bytes, max_rows: int = TABLE_MAX_ROWS) -> TruncatedList:
     df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str, keep_default_na=False)
-    rows: list[dict] = []
+    rows = TruncatedList()
     for i, record in enumerate(df.to_dict(orient="records"), start=2):  # row 1 = header
         for col, val in record.items():
             if val is None or (isinstance(val, str) and not val.strip()):
                 continue
-            rows.append({"sheet": "CSV", "cell": f"Row {i} / {col}", "value": str(val)})
             if len(rows) >= max_rows:
-                break
-        if len(rows) >= max_rows:
-            break
+                rows.truncated = True
+                return rows
+            rows.append({"sheet": "CSV", "cell": f"Row {i} / {col}", "value": str(val)})
     return rows
 
 
@@ -134,6 +203,7 @@ async def _claude_json_messages(messages: list[dict]) -> list[dict]:
     resp = await client.messages.create(
         model=settings.anthropic_model,
         max_tokens=2000,
+        temperature=0,
         system=SYSTEM_PROMPT,
         messages=messages,
     )
@@ -175,6 +245,29 @@ PARTIES_SYSTEM = (
 )
 
 
+def cap_parties(data: object) -> TruncatedList:
+    """Pure parties sanitizer: [{name, role}], capped at PARTIES_CAP.
+
+    Split out of extract_parties_pdf so the 12-cap + truncation flag are
+    unit-testable without network. Never raises.
+    """
+    clean = TruncatedList()
+    try:
+        if not isinstance(data, list):
+            return clean
+        kept: list[dict] = []
+        for it in data:
+            if isinstance(it, dict) and isinstance(it.get("name"), str) and it["name"].strip():
+                role = it.get("role") if it.get("role") in (
+                    "applicant", "vendor", "supplier", "laboratory", "brand", "other") else "other"
+                kept.append({"name": it["name"].strip()[:120], "role": role})
+        clean.extend(kept[:PARTIES_CAP])
+        clean.truncated = len(kept) > PARTIES_CAP
+        return clean
+    except Exception:
+        return clean
+
+
 async def extract_parties_pdf(pdf_bytes: bytes) -> list[dict]:
     """Who is on this document? Failure-tolerant: [] on any problem."""
     try:
@@ -183,6 +276,7 @@ async def extract_parties_pdf(pdf_bytes: bytes) -> list[dict]:
         resp = await client.messages.create(
             model=settings.anthropic_model,
             max_tokens=400,
+            temperature=0,
             system=PARTIES_SYSTEM,
             messages=[{
                 "role": "user",
@@ -195,12 +289,6 @@ async def extract_parties_pdf(pdf_bytes: bytes) -> list[dict]:
         )
         text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
         data = parse_extraction_payload(text)
-        clean = []
-        for it in data:
-            if isinstance(it, dict) and isinstance(it.get("name"), str) and it["name"].strip():
-                role = it.get("role") if it.get("role") in (
-                    "applicant", "vendor", "supplier", "laboratory", "brand", "other") else "other"
-                clean.append({"name": it["name"].strip()[:120], "role": role})
-        return clean[:12]
+        return cap_parties(data)
     except Exception:
         return []

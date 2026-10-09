@@ -1,5 +1,6 @@
 import "./globals.css";
 import { Fraunces, IBM_Plex_Mono, Inter } from "next/font/google";
+import { LocaleProvider } from "@/components/LocaleProvider";
 
 const display = Fraunces({ subsets: ["latin"], variable: "--font-display", display: "swap" });
 const sans = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
@@ -10,7 +11,9 @@ export const metadata = { title: "TraceFlow AI — Digital Product Passports", d
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
-      <body className="font-sans">{children}</body>
+      <body className="font-sans">
+        <LocaleProvider>{children}</LocaleProvider>
+      </body>
     </html>
   );
 }

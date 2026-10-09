@@ -1,11 +1,3 @@
-# Pilot clone-and-run: `cp .env.example .env` then `docker compose up --build`.
-# API waits for Postgres (service_healthy) and applies migrations automatically.
-# Web console (Next.js) is built from ./web and served on ${WEB_PORT:-3000};
-# NEXT_PUBLIC_* keys are baked in at build time, so re-run with --build
-# after changing keys in .env.
-# NOTE: no top-level `name:` key — keeps this file working with both
-# `docker compose` (v2) and the older standalone `docker-compose` (v1).
-
 services:
   db:
     image: postgres:16-alpine
@@ -19,7 +11,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U traceflow_app -d traceflow"]
       interval: 5s
-      timeout: 3s
+      timeout: 5s
       retries: 20
 
   migrate:
@@ -27,6 +19,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}@db:5432/traceflow
     command: bash scripts/migrate.sh
@@ -40,7 +34,6 @@ services:
     env_file:
       - .env
     environment:
-      # Compose provides the pilot DB; .env supplies Supabase/R2/Claude keys.
       DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}@db:5432/traceflow
       PORT: 8000
     ports:
@@ -75,6 +68,8 @@ services:
     depends_on:
       api:
         condition: service_started
+    environment:
+      DATABASE_URL: postgresql://traceflow_app:${DB_APP_PASSWORD}@db:5432/traceflow
     ports:
       - "${WEB_PORT:-3000}:3000"
     restart: unless-stopped

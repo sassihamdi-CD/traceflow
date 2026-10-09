@@ -14,7 +14,14 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 import time
+
+# Repo-root bootstrap: when run as `python scripts/worker.py` (Docker CMD),
+# sys.path[0] is scripts/, so `from app...` imports fail. Same pattern as
+# scripts/backfill_parties.py. Without this every job fails with
+# ModuleNotFoundError: No module named 'app'.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import psycopg
 
@@ -61,6 +68,7 @@ def _run_real_extraction(conn, job_id, document_id, workspace_id) -> None:
         extract_pdf_native,
         extract_table_mapped,
         sanitize_items,
+        validate_item_locations,
         xlsx_to_table,
     )
 
@@ -90,23 +98,49 @@ def _run_real_extraction(conn, job_id, document_id, workspace_id) -> None:
             for r in cur.fetchall()
         ]
 
+    with conn.cursor() as cur:
+        # Idempotency: exactly one set of field_values per document. If rows
+        # already exist (legacy BackgroundTasks double-path or a duplicate
+        # queue row), mark done without inserting a second set.
+        cur.execute(
+            "SELECT COUNT(*) FROM field_values WHERE document_id = %s",
+            (document_id,),
+        )
+        if (cur.fetchone() or [0])[0] > 0:
+            cur.execute(
+                "UPDATE documents SET extraction_status = 'done', extraction_error = NULL"
+                " WHERE id = %s",
+                (document_id,),
+            )
+            cur.execute(
+                "UPDATE extraction_jobs SET status = 'done', error = NULL,"
+                " updated_at = now() WHERE id = %s",
+                (job_id,),
+            )
+            conn.commit()
+            return
+
     try:
         body = _fetch_document_bytes(storage_key)
     except Exception as exc:
         raise RuntimeError(f"r2-fetch-failed: {exc}") from exc
 
     ext = os.path.splitext(storage_key or "")[1].lower()
+    table = None
     if ext == ".pdf":
         items = asyncio.run(extract_pdf_native(body, defs))
     elif ext == ".xlsx":
-        items = asyncio.run(extract_table_mapped(xlsx_to_table(body), defs))
+        table = xlsx_to_table(body)
+        items = asyncio.run(extract_table_mapped(table, defs))
     elif ext == ".csv":
-        items = asyncio.run(extract_table_mapped(csv_to_table(body), defs))
+        table = csv_to_table(body)
+        items = asyncio.run(extract_table_mapped(table, defs))
     else:
         raise RuntimeError(f"unsupported-type: {ext or '(none)'}")
 
     allowed = {d["field_key"] for d in defs}
-    clean = sanitize_items(items, allowed)
+    clean = validate_item_locations(sanitize_items(items, allowed), ext, table)
+    truncated = bool(getattr(table, "truncated", False))
 
     with conn.cursor() as cur:
         for it in clean:
@@ -131,25 +165,30 @@ def _run_real_extraction(conn, job_id, document_id, workspace_id) -> None:
                 from app.services.document_items import extract_full_items_pdf, store_document_items
                 full = asyncio.run(extract_full_items_pdf(body))
                 if full:
-                    asyncio.run(store_document_items(conn, workspace_id, document_id, full))
+                    stored = asyncio.run(store_document_items(conn, workspace_id, document_id, full))
+                    if getattr(stored, "truncated", False):
+                        truncated = True
         except Exception as exc:  # noqa: BLE001
             print(f"document_items fallback: {type(exc).__name__}: {exc}")
         parties: list = []
         if ext == ".pdf":
             try:
                 parties = asyncio.run(extract_parties_pdf(body)) or []
+                if getattr(parties, "truncated", False):
+                    truncated = True
             except Exception:
                 parties = []
             cur.execute(
                 "UPDATE documents SET extraction_status = 'done', extracted_count = %s,"
-                " extraction_error = NULL, detected_parties = %s::jsonb WHERE id = %s",
-                (len(clean), json.dumps(parties), document_id),
+                " extraction_error = NULL, extraction_truncated = %s,"
+                " detected_parties = %s::jsonb WHERE id = %s",
+                (len(clean), truncated, json.dumps(parties), document_id),
             )
         else:
             cur.execute(
                 "UPDATE documents SET extraction_status = 'done', extracted_count = %s,"
-                " extraction_error = NULL WHERE id = %s",
-                (len(clean), document_id),
+                " extraction_error = NULL, extraction_truncated = %s WHERE id = %s",
+                (len(clean), truncated, document_id),
             )
         cur.execute(
             "UPDATE extraction_jobs SET status = 'done', error = NULL, "
@@ -177,9 +216,10 @@ def process_one(conn) -> bool:
         try:
             _run_real_extraction(conn, job_id, document_id, workspace_id)
         except Exception as exc:  # noqa: BLE001
-            err = str(exc)[:500]
-            if "r2-fetch-failed" in err:
-                err = "r2-fetch-failed"
+            # Class + message (truncated): class-only errors are low-signal
+            # for reviewers (audit C15). The r2-fetch prefix survives inside
+            # the message instead of being collapsed to a bare token.
+            err = f"{type(exc).__name__}: {exc}"[:500]
             with conn.cursor() as cur2:
                 cur2.execute(
                     "UPDATE extraction_jobs SET status = 'failed', error = %s, "

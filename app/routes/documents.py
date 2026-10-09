@@ -5,10 +5,13 @@ this surface exposes document_items written by the Track A full extraction.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
-from app.auth import Caller, get_caller
+from app import errors
+
+from app.auth import Caller, require_member
 from app.db import get_pool
+from app.schemas import uuid_or_404
 
 router = APIRouter()
 
@@ -16,7 +19,7 @@ router = APIRouter()
 async def _fetch_document(conn, workspace_id: str, document_id: str) -> dict | None:
     cur = await conn.execute(
         "SELECT d.id, d.product_id, d.filename, d.extraction_status,"
-        " d.extracted_count, d.extraction_error, d.uploaded_at"
+        " d.extracted_count, d.extraction_error, d.uploaded_at, d.extraction_truncated"
         " FROM documents d WHERE d.id = %s AND d.workspace_id = %s",
         (document_id, workspace_id),
     )
@@ -31,6 +34,7 @@ async def _fetch_document(conn, workspace_id: str, document_id: str) -> dict | N
         "extracted_count": row[4],
         "extraction_error": row[5],
         "uploaded_at": row[6].isoformat() if row[6] is not None else None,
+        "truncated": bool(row[7]) if len(row) > 7 else False,
     }
 
 
@@ -54,24 +58,26 @@ async def _fetch_items(conn, workspace_id: str, document_id: str) -> list[dict]:
 
 
 @router.get("/api/documents/{document_id}")
-async def get_document(document_id: str, caller: Caller = Depends(get_caller)):
+async def get_document(document_id: str, caller: Caller = Depends(require_member)):
     """Document detail: doc row + all transcribed items. 404 outside workspace."""
+    uuid_or_404(document_id, "That document")
     pool = await get_pool()
     async with pool.connection() as conn:
         doc = await _fetch_document(conn, caller.workspace_id, document_id)
         if doc is None:
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise errors.not_found("That document")
         doc["items"] = await _fetch_items(conn, caller.workspace_id, document_id)
     return doc
 
 
 @router.get("/api/documents/{document_id}/items")
-async def list_document_items(document_id: str, caller: Caller = Depends(get_caller)):
+async def list_document_items(document_id: str, caller: Caller = Depends(require_member)):
     """All transcribed items for one document. 404 outside workspace."""
+    uuid_or_404(document_id, "That document")
     pool = await get_pool()
     async with pool.connection() as conn:
         doc = await _fetch_document(conn, caller.workspace_id, document_id)
         if doc is None:
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise errors.not_found("That document")
         items = await _fetch_items(conn, caller.workspace_id, document_id)
     return {"document_id": document_id, "count": len(items), "items": items}

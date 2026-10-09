@@ -63,7 +63,8 @@ def test_service_failure_tolerant():
 def test_routes_both_get_paths_and_caller():
     assert "/api/documents/{document_id}/items" in ROUTES_SRC
     assert "/api/documents/{document_id}" in ROUTES_SRC
-    assert "get_caller" in ROUTES_SRC
+    # Auth-gated: get_caller directly or via the require_member/require_role wrappers.
+    assert "get_caller" in ROUTES_SRC or "require_member" in ROUTES_SRC
     assert "404" in ROUTES_SRC
 
 

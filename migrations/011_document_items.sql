@@ -17,4 +17,4 @@ CREATE TABLE IF NOT EXISTS document_items (
 
 CREATE INDEX IF NOT EXISTS idx_document_items_doc ON document_items(document_id);
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON document_items TO traceflow_app;
+GRANT SELECT, INSERT, UPDATE ON client_requests TO CURRENT_USER;

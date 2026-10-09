@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
-from app.auth import Caller, get_caller, require_reviewer
+from app import errors
+
+from app.auth import Caller, ensure_workspace_exists, require_member, require_reviewer
 from app.db import get_pool
+from app.schemas import uuid_or_404
 from app.services.requests import request_detail
 
 router = APIRouter()
@@ -18,25 +21,26 @@ async def create_request(body: dict, caller: Caller = Depends(require_reviewer))
     a new_product {sku, name, manufacturer_name, category?} object."""
     for k in ("requester_name", "subject"):
         if not body.get(k):
-            raise HTTPException(status_code=422, detail=f"Missing field: {k}")
+            raise errors.missing_field(k)
     pool = await get_pool()
     async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
         async with conn.transaction():
             product_id = body.get("product_id")
             if product_id:
+                uuid_or_404(product_id, "That product")
                 cur = await conn.execute(
                     "SELECT id FROM products WHERE id = %s AND workspace_id = %s",
                     (product_id, caller.workspace_id),
                 )
                 if await cur.fetchone() is None:
-                    raise HTTPException(status_code=404, detail="Product not found")
+                    raise errors.not_found("That product")
             else:
                 np = body.get("new_product") or {}
                 for k in ("sku", "name", "manufacturer_name"):
                     if not np.get(k):
-                        raise HTTPException(
-                            status_code=422,
-                            detail="Provide product_id or new_product {sku, name, manufacturer_name}",
+                        raise errors.missing_field(
+                            f"a product to link (existing product, or a new one with SKU, name and manufacturer — missing “{k}”)"
                         )
                 import nanoid as _nanoid
                 cur = await conn.execute(
@@ -68,7 +72,7 @@ async def create_request(body: dict, caller: Caller = Depends(require_reviewer))
 
 
 @router.get("/api/requests")
-async def get_requests(caller: Caller = Depends(get_caller)):
+async def get_requests(caller: Caller = Depends(require_member)):
     pool = await get_pool()
     async with pool.connection() as conn:
         cur = await conn.execute(
@@ -97,21 +101,26 @@ async def get_requests(caller: Caller = Depends(get_caller)):
 
 
 @router.get("/api/requests/{request_id}")
-async def get_request(request_id: str, caller: Caller = Depends(get_caller)):
+async def get_request(request_id: str, caller: Caller = Depends(require_member)):
+    uuid_or_404(request_id)
     pool = await get_pool()
     async with pool.connection() as conn:
         d = await request_detail(conn, caller.workspace_id, request_id)
     if d is None:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise errors.not_found("That request")
     return d
 
 
 @router.post("/api/requests/{request_id}/status")
 async def set_request_status(request_id: str, body: dict, caller: Caller = Depends(require_reviewer)):
+    """UI contract (D22): {status: open|responded}. 422 on bad status,
+    404 when the request is not in the caller's workspace."""
+    uuid_or_404(request_id)
     if body.get("status") not in ("open", "responded"):
-        raise HTTPException(status_code=422, detail="status must be open or responded")
+        raise errors.bad_status()
     pool = await get_pool()
     async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
         async with conn.transaction():
             cur = await conn.execute(
                 "UPDATE client_requests SET status = %s WHERE id = %s AND workspace_id = %s",
@@ -119,7 +128,7 @@ async def set_request_status(request_id: str, body: dict, caller: Caller = Depen
             )
             # psycopg async rowcount via cursor attribute
             if cur.rowcount == 0:
-                raise HTTPException(status_code=404, detail="Not found")
+                raise errors.not_found("That request")
             await conn.execute(
                 "INSERT INTO audit_log (workspace_id, actor, action, entity_type, entity_id, detail)"
                 " VALUES (%s,%s,'request.status','client_request',%s,%s::jsonb)",

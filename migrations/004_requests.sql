@@ -24,4 +24,4 @@ ALTER TABLE supplier_followups ADD COLUMN IF NOT EXISTS items JSONB;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS valid_until DATE;
 
 -- App-role grants for the new table/columns (audit_log stays SELECT+INSERT only).
-GRANT SELECT, INSERT, UPDATE ON client_requests TO traceflow_app;
+GRANT SELECT, INSERT, UPDATE ON client_requests TO CURRENT_USER;

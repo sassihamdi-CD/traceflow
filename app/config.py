@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-4-5-20250929"
     frontend_url: str = "http://localhost:3001"  # comma-separated origins allowed
     intake_secret: str = ""  # shared secret for POST /api/intake/email (empty = 503)
+    founder_key: str = ""  # TraceFlow founder key for /founder + /api/founder/*.
+    # Server-only, never NEXT_PUBLIC_. Empty = founder area disabled.
     port: int = 8000
 
 

@@ -1,9 +1,11 @@
 """Manager notification center API. All routes workspace-scoped; reads strict."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
-from app.auth import Caller, get_caller
+from app import errors
+
+from app.auth import Caller, require_member
 from app.db import get_pool
 
 router = APIRouter()
@@ -11,7 +13,7 @@ router = APIRouter()
 
 @router.get("/api/notifications")
 async def list_notifications(
-    unread_only: bool = False, limit: int = 50, caller: Caller = Depends(get_caller),
+    unread_only: bool = False, limit: int = 50, caller: Caller = Depends(require_member),
 ):
     limit = max(1, min(int(limit or 50), 100))
     pool = await get_pool()
@@ -48,7 +50,7 @@ async def list_notifications(
 
 
 @router.post("/api/notifications/{notif_id}/read")
-async def mark_read(notif_id: str, caller: Caller = Depends(get_caller)):
+async def mark_read(notif_id: str, caller: Caller = Depends(require_member)):
     pool = await get_pool()
     async with pool.connection() as conn:
         cur = await conn.execute(
@@ -63,12 +65,12 @@ async def mark_read(notif_id: str, caller: Caller = Depends(get_caller)):
                 (notif_id, caller.workspace_id),
             )
             if await cur.fetchone() is None:
-                raise HTTPException(status_code=404, detail="Not found")
+                raise errors.not_found("That notification")
     return {"ok": True}
 
 
 @router.post("/api/notifications/read-all")
-async def mark_all_read(caller: Caller = Depends(get_caller)):
+async def mark_all_read(caller: Caller = Depends(require_member)):
     pool = await get_pool()
     async with pool.connection() as conn:
         cur = await conn.execute(

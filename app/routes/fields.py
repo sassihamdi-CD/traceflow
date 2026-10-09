@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
-from app.auth import Caller, get_caller, require_reviewer
+from app import errors
+
+from app.auth import Caller, ensure_workspace_exists, get_caller, require_reviewer
 from app.db import get_pool
-from app.schemas import CorrectBody, ResolveConflictBody
+from app.schemas import CorrectBody, ResolveConflictBody, uuid_or_404
 
 router = APIRouter()
 
@@ -22,8 +24,10 @@ async def _audit(conn, ws: str, actor: str, action: str, entity_id: str, detail:
 
 @router.post("/api/fields/{field_value_id}/accept")
 async def accept_field(field_value_id: str, caller: Caller = Depends(require_reviewer)):
+    uuid_or_404(field_value_id)
     pool = await get_pool()
     async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
         async with conn.transaction():
             cur = await conn.execute(
                 "SELECT status FROM field_values WHERE id = %s AND workspace_id = %s",
@@ -31,9 +35,9 @@ async def accept_field(field_value_id: str, caller: Caller = Depends(require_rev
             )
             row = await cur.fetchone()
             if row is None:
-                raise HTTPException(status_code=404, detail="Not found")
+                raise errors.not_found("That value")
             if row[0] != "proposed":
-                raise HTTPException(status_code=409, detail=f"Only proposed rows can be accepted (is {row[0]})")
+                raise errors.already_decided("accepted", row[0])
             await conn.execute(
                 "UPDATE field_values SET status='accepted', reviewed_by=%s, reviewed_at=now()"
                 " WHERE id = %s",
@@ -45,8 +49,10 @@ async def accept_field(field_value_id: str, caller: Caller = Depends(require_rev
 
 @router.post("/api/fields/{field_value_id}/reject")
 async def reject_field(field_value_id: str, caller: Caller = Depends(require_reviewer)):
+    uuid_or_404(field_value_id)
     pool = await get_pool()
     async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
         async with conn.transaction():
             cur = await conn.execute(
                 "SELECT status FROM field_values WHERE id = %s AND workspace_id = %s",
@@ -54,9 +60,9 @@ async def reject_field(field_value_id: str, caller: Caller = Depends(require_rev
             )
             row = await cur.fetchone()
             if row is None:
-                raise HTTPException(status_code=404, detail="Not found")
+                raise errors.not_found("That value")
             if row[0] != "proposed":
-                raise HTTPException(status_code=409, detail=f"Only proposed rows can be rejected (is {row[0]})")
+                raise errors.already_decided("rejected", row[0])
             await conn.execute(
                 "UPDATE field_values SET status='rejected', reviewed_by=%s, reviewed_at=now()"
                 " WHERE id = %s",
@@ -68,8 +74,10 @@ async def reject_field(field_value_id: str, caller: Caller = Depends(require_rev
 
 @router.post("/api/fields/{field_value_id}/correct")
 async def correct_field(field_value_id: str, body: CorrectBody, caller: Caller = Depends(require_reviewer)):
+    uuid_or_404(field_value_id)
     pool = await get_pool()
     async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
         async with conn.transaction():
             cur = await conn.execute(
                 "SELECT product_id, field_key, status, document_id FROM field_values"
@@ -78,10 +86,10 @@ async def correct_field(field_value_id: str, body: CorrectBody, caller: Caller =
             )
             row = await cur.fetchone()
             if row is None:
-                raise HTTPException(status_code=404, detail="Not found")
+                raise errors.not_found("That value")
             product_id, field_key, status, document_id = row[0], row[1], row[2], row[3]
             if status != "proposed":
-                raise HTTPException(status_code=409, detail=f"Only proposed rows can be corrected (is {status})")
+                raise errors.already_decided("corrected", status)
             cur = await conn.execute(
                 "INSERT INTO field_values (workspace_id, product_id, field_key, value, unit,"
                 " status, document_id, extracted_by, reviewed_by, reviewed_at, supersedes_id)"
@@ -103,8 +111,11 @@ async def correct_field(field_value_id: str, body: CorrectBody, caller: Caller =
 async def resolve_conflict(
     product_id: str, field_key: str, body: ResolveConflictBody, caller: Caller = Depends(require_reviewer)
 ):
+    uuid_or_404(product_id)
+    uuid_or_404(body.chosen_field_value_id, "That proposal")
     pool = await get_pool()
     async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
         async with conn.transaction():
             cur = await conn.execute(
                 "SELECT id FROM field_values WHERE id = %s AND product_id = %s"
@@ -112,7 +123,7 @@ async def resolve_conflict(
                 (body.chosen_field_value_id, product_id, field_key, caller.workspace_id),
             )
             if await cur.fetchone() is None:
-                raise HTTPException(status_code=404, detail="Chosen row is not a proposed candidate for this field")
+                raise errors.not_candidate()
             cur = await conn.execute(
                 "SELECT id FROM field_values WHERE product_id = %s AND field_key = %s"
                 " AND workspace_id = %s AND status = 'proposed' AND id != %s",
@@ -144,8 +155,10 @@ async def accept_all(product_id: str, caller: Caller = Depends(require_reviewer)
     one audit row each), all in one transaction. Conflicting fields are NOT
     auto-resolved — those still need an explicit human choice per field.
     """
+    uuid_or_404(product_id)
     pool = await get_pool()
     async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
         async with conn.transaction():
             cur = await conn.execute(
                 "SELECT id, field_key FROM field_values WHERE product_id = %s"

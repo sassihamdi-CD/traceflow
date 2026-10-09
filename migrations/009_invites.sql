@@ -14,9 +14,15 @@ CREATE TABLE IF NOT EXISTS invites (
 
 CREATE INDEX IF NOT EXISTS idx_invites_workspace ON invites(workspace_id);
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON invites TO traceflow_app;
+GRANT SELECT, INSERT, UPDATE ON client_requests TO CURRENT_USER;
 
--- Seed: pilot invite code TF-133C98 (sha256 hex of the code).
-INSERT INTO invites (workspace_id, code_hash, role, max_uses)
-VALUES ('4db22bd4-77a6-4013-91c7-7e8936680909', '457a99ba6245c9b730dfb536201ca55756537811285a3159f675157d3fd90538', 'reviewer', NULL)
-ON CONFLICT DO NOTHING;
+-- Key hygiene (per-company DB decision, 2026-10-07):
+-- The pilot code TF-133C98 was committed to git and is COMPROMISED.
+-- Do NOT seed a live invite here. Per-company invites are created at
+-- provisioning time (see docs/COMPANY_PROVISIONING.md):
+--   INSERT INTO invites (workspace_id, code_hash, role, max_uses, expires_at)
+--   VALUES ('<WORKSPACE_ID>', sha256('<fresh-random-code>'), 'reviewer', 5,
+--           now() + interval '7 days');
+-- Every invite MUST set max_uses AND expires_at (unlimited/never-expire
+-- invites are rejected in review). Migration 014 deletes the compromised
+-- TF-133C98 row on existing DBs.

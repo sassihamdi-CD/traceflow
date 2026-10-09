@@ -84,6 +84,7 @@ async def ask_workspace(question: str, snapshot: str) -> str:
     resp = await client.messages.create(
         model=settings.anthropic_model,
         max_tokens=800,
+        temperature=0,
         system=ASK_SYSTEM,
         messages=[{
             "role": "user",

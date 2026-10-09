@@ -1,6 +1,5 @@
 # Build context hygiene: deps are installed INSIDE the image (npm ci).
 node_modules/
-.next/
 out/
 .env.local
 .env

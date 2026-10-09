@@ -14,12 +14,12 @@ import { getMiddlewareUser, updateSession } from "./utils/supabase/middleware";
  */
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (pathname.startsWith("/_next") || pathname === "/favicon.ico") {
+  if (pathname.startsWith("/_next") || pathname === "/favicon.ico" || pathname.startsWith("/api/")) {
     return NextResponse.next();
   }
   // Public: landing + isolated public passport route. /login refreshes
   // its own session but never redirects.
-  if (pathname === "/" || pathname.startsWith("/passport")) {
+  if (pathname === "/" || pathname.startsWith("/passport") || pathname === "/founder") {
     return NextResponse.next();
   }
   if (pathname === "/login") {

@@ -7,7 +7,9 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+
+from app import errors
 
 from app.db import get_pool
 
@@ -24,7 +26,7 @@ async def public_passport(public_slug: str):
         )
         row = await cur.fetchone()
         if row is None:
-            raise HTTPException(status_code=404, detail="Not found")
+            raise errors.not_found("That passport")
         product_id, name, category = row[0], row[1], row[2]
         # Structurally incapable of returning proposed/rejected: filter is in SQL.
         cur = await conn.execute(

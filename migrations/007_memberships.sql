@@ -15,7 +15,7 @@ CREATE INDEX IF NOT EXISTS idx_memberships_workspace ON memberships(workspace_id
 
 -- App role manages invites: full row access on memberships.
 -- audit_log stays SELECT + INSERT only (untouched here).
-GRANT SELECT, INSERT, UPDATE, DELETE ON memberships TO traceflow_app;
+GRANT SELECT, INSERT, UPDATE ON client_requests TO CURRENT_USER;
 
 -- Seed: pilot admin membership (real user_id linked later via backfill).
 INSERT INTO memberships (workspace_id, user_id, role)
